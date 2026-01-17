@@ -1,0 +1,18 @@
+# 虚拟环境
+venv/
+.venv/
+__pycache__/
+
+# 敏感信息
+.env
+
+# 数据和输出
+data/
+output/
+*.json
+*.html
+*.csv
+
+# 编辑器
+.vscode/
+.idea/
