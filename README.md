@@ -1,96 +1,141 @@
-# Thordata RAG Pipeline
+# ⚡ ThorData MCP Server
 
 <div align="center">
 
 <img src="https://img.shields.io/badge/Thordata-Official-blue?style=for-the-badge" alt="Thordata Logo">
 
-**Production-grade RAG ingestion pipeline. Turn ANY website into structured AI knowledge.**  
-*Smart Routing • Hybrid Scraping • 45+ Supported Platforms*
+**The Bridge between LLMs and the Real World.**
+*Connect Claude, Cursor, and AI Agents to ThorData's Residential Proxies & Scraping Infrastructure.*
 
 [![Python](https://img.shields.io/badge/Python-3.10%2B-blue)](https://www.python.org/)
-[![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
+[![MCP Protocol](https://img.shields.io/badge/MCP-Compliant-green)](https://modelcontextprotocol.io/)
+[![Docker](https://img.shields.io/badge/Docker-Ready-blue)](https://hub.docker.com/)
 
 </div>
 
 ---
 
-## 💡 What is this?
+## 📖 Overview
 
-This is a flagship implementation of a **"Universal Web Reader"** for AI Agents. It solves the hardest part of RAG (Retrieval-Augmented Generation): **Getting clean, structured data from complex websites.**
+This MCP (Model Context Protocol) Server exposes **ThorData's** powerful data gathering capabilities as executable tools for AI models. It features a **Smart Routing** engine that automatically selects the best extraction strategy based on the target URL.
 
-Unlike standard scrapers that break on dynamic sites, this pipeline uses **Thordata's Smart Routing Architecture**:
+### ✨ Key Features
 
-1.  **🕵️ Smart Router**: Automatically detects the URL type (Amazon, YouTube, Google Maps, etc.).
-2.  **⚡ Specialized Ingestors**: Dispatches tasks to **45+ specialized spiders** (e.g., `amazon_product`, `tiktok_video`) to fetch **structured JSON**.
-3.  **🌐 Universal Fallback**: If no specialized tool matches (or if it fails), it falls back to a Headless Browser cluster to render the page and extract **Markdown**.
-4.  **🧠 Semantic Analysis**: Feeds the cleaned data into an LLM (DeepSeek/Qwen/GPT-4o) for instant insight generation.
-
----
-
-## 🚀 Supported Platforms (Auto-Detected)
-
-Just paste a URL, and the pipeline selects the best strategy:
-
-| Platform | Supported URLs | Data Type |
-| :--- | :--- | :--- |
-| **Amazon** | Product (`/dp/`), Search (`/s?k=`), Reviews, Seller | JSON (Price, Rating, ASIN) |
-| **Google** | Maps, Shopping, Play Store (App & Reviews) | JSON (Business Info, App Stats) |
-| **Social** | YouTube (Video/Channel), TikTok (Video/Profile/Shop) | JSON (Views, Likes, Metadata) |
-| **Social** | Instagram, Facebook, Twitter (X), LinkedIn (Company/Job) | JSON (Post content, Profile info) |
-| **Others** | Reddit, GitHub, Zillow, Booking.com, Yelp | JSON (Structured Data) |
-| **General** | Any other website (TechCrunch, Wikipedia, etc.) | Markdown (Full Page Text) |
+*   **🧠 Smart Scrape**: One tool to rule them all. Automatically routes requests:
+    *   **E-Commerce**: Amazon (Product/Search/Reviews) -> Structured JSON.
+    *   **Social Media**: YouTube (Video/Channel), TikTok, Instagram -> Structured JSON.
+    *   **Maps**: Google Maps (Details/Reviews) -> Structured JSON.
+    *   **General Web**: Any other website -> Markdown (via Headless Browser).
+*   **🕷️ Browser Automation**: Generate valid WebSocket URLs to drive **Scraping Browsers** (Playwright/Puppeteer) directly from the LLM.
+*   **🔍 Real-time Search**: Google Search integration with anti-bot bypassing.
+*   **🛡️ Enterprise Grade**: Built on `thordata-sdk` with automatic retries, rotation, and error handling.
 
 ---
 
-## 🛠️ Quick Start
+## 🚀 Quick Start (Docker)
+
+The easiest way to run the server is via Docker. This ensures a consistent environment.
 
 ### 1. Prerequisites
-*   Python 3.10+
-*   [Thordata API Tokens](https://www.thordata.com/)
-*   OpenAI-compatible API Key (DeepSeek, SiliconFlow, or OpenAI)
+Get your credentials from the [ThorData Dashboard](https://dashboard.thordata.com/):
+*   **Scraper Token**: For SERP & Web Unblocking.
+*   **Public Token/Key**: For Task Management (Video/Data scraping).
+*   **Browser Credentials**: For Scraping Browser Automation.
 
-### 2. Installation
+### 2. Run Container
 ```bash
-git clone https://github.com/Thordata/thordata-rag-pipeline.git
-cd thordata-rag-pipeline
-pip install -r requirements.txt
+# Run in interactive mode (Stdio)
+docker run -i --rm \
+  -e THORDATA_SCRAPER_TOKEN="your_token" \
+  -e THORDATA_PUBLIC_TOKEN="your_public_token" \
+  -e THORDATA_PUBLIC_KEY="your_public_key" \
+  -e THORDATA_BROWSER_USERNAME="your_browser_user" \
+  -e THORDATA_BROWSER_PASSWORD="your_browser_pass" \
+  thordata-mcp:0.1.0
 ```
 
-### 3. Configuration
-Copy `.env.example` to `.env` and fill in your keys:
-```ini
-THORDATA_SCRAPER_TOKEN=your_token
-THORDATA_PUBLIC_TOKEN=your_public_token
-THORDATA_PUBLIC_KEY=your_public_key
+### 3. Connect to Claude Desktop
+Add the following to your `claude_desktop_config.json`:
 
-OPENAI_API_KEY=sk-xxxx
-OPENAI_API_BASE=https://api.siliconflow.cn/v1  # Example for SiliconFlow
-```
-
-### 4. Run Analysis
-
-**Analyze an Amazon Product:**
-```bash
-python main.py --url "https://www.amazon.com/dp/B0D54MM6QD" --question "What are the pros and cons?"
-```
-
-**Analyze a Google Maps Place (Detailed):**
-```bash
-python main.py --url 'https://www.google.com/maps/place/Pizza+Inn+Magdeburg/data=!4m7!3m6!1s0x47a5f50c083530a3:0xfdba8746b538141!8m2!3d52.1263086!4d11.6094743!16s%2Fg%2F11kqmtk3dt!19sChIJozA1CAz1pUcRQYFTa3So2w8?authuser=0&hl=en&rclk=1' --question "Where is this place located?"
-```
-
-**Analyze a Google Play App:**
-```bash
-python main.py --url "https://play.google.com/store/apps/details?id=com.whatsapp" --question "What is the rating?"
-```
-
-**Analyze Any Website (Universal Mode):**
-```bash
-python main.py --url "https://techcrunch.com/..." --question "Summarize this article."
+```json
+{
+  "mcpServers": {
+    "thordata": {
+      "command": "docker",
+      "args": [
+        "run", "-i", "--rm",
+        "-e", "THORDATA_SCRAPER_TOKEN=...",
+        "-e", "THORDATA_PUBLIC_TOKEN=...",
+        "-e", "THORDATA_PUBLIC_KEY=...",
+        "-e", "THORDATA_BROWSER_USERNAME=...",
+        "-e", "THORDATA_BROWSER_PASSWORD=...",
+        "thordata-mcp:0.1.0"
+      ]
+    }
+  }
+}
 ```
 
 ---
+
+## 🛠️ Local Development
+
+### Installation
+
+```bash
+git clone https://github.com/Thordata/thordata-mcp-server.git
+cd thordata-mcp-server
+
+# Install dependencies (requires uv or pip)
+pip install -e .
+```
+
+### Configuration
+Create a `.env` file:
+
+```ini
+THORDATA_SCRAPER_TOKEN=xxx
+THORDATA_PUBLIC_TOKEN=xxx
+THORDATA_PUBLIC_KEY=xxx
+
+# For Browser Automation Tool
+THORDATA_BROWSER_USERNAME=xxx
+THORDATA_BROWSER_PASSWORD=xxx
+```
+
+### Debugging
+Run the industrial-grade acceptance suite to verify your environment:
+
+```bash
+python acceptance_test.py
+```
+
+---
+
+## 🧰 Available Tools
+
+| Tool Name | Description |
+| :--- | :--- |
+| **`smart_scrape`** | **The Core Tool.** Input *any* URL. It auto-detects Amazon/YouTube/Maps/TikTok and returns structured JSON. For generic sites, it returns Markdown. |
+| **`google_search`** | Perform Google searches using ThorData's SERP API. |
+| **`read_url`** | Convert a webpage to LLM-friendly Markdown (General purpose). |
+| **`get_scraping_browser_url`** | Generates a secure `wss://` endpoint for Playwright/Puppeteer sessions. |
+
+---
+
+## 🏗️ Architecture
+
+```mermaid
+graph LR
+    User[AI Client] -->|JSON-RPC| MCP[MCP Server]
+    MCP -->|Smart Router| SDK[ThorData Python SDK]
+    SDK -->|Route 1| SERP[SERP API]
+    SDK -->|Route 2| Universal[Web Unlocker]
+    SDK -->|Route 3| Tasks[Web Scraper API]
+    Tasks -->|Async| Cloud[ThorData Cloud]
+    Cloud -->|JSON| MCP
+```
 
 ## 📄 License
 
-MIT License. See [LICENSE](LICENSE) for details.
+MIT

@@ -1,10 +1,10 @@
 import requests
 import json
-import re
-from typing import Optional
+import time
+from typing import Optional, Dict, Any
 from urllib.parse import urlparse, parse_qs
-from thordata import ThordataClient, CommonSettings
-from .registry import SPIDER_REGISTRY, SpiderConfig
+from thordata import ThordataClient
+from .registry import SPIDER_REGISTRY
 
 class SpecializedIngestor:
     def __init__(self, scraper_token: str, public_token: Optional[str] = None, public_key: Optional[str] = None):
@@ -14,57 +14,109 @@ class SpecializedIngestor:
             public_key=public_key
         )
 
-    def _run_spider(self, config_key: str, input_value: str, dynamic_params: dict = None) -> Optional[str]:
+    def _create_video_task_raw(self, cfg, final_params) -> str:
+        """
+        Manually create video task to bypass SDK CommonSettings limitations.
+        Matches the successful Python/CURL example EXACTLY.
+        """
+        # 1. Payload Values (Clean, no windows escaping)
+        spider_universal = {
+            "resolution": "<=360p", 
+            "video_codec": "vp9",
+            "audio_format": "opus",
+            "bitrate": "<=320",
+            "selected_only": "false"
+        }
+        
+        payload = {
+            "file_name": f"rag_vid_{cfg.id}",
+            "spider_id": cfg.id,
+            "spider_name": cfg.name,
+            "spider_parameters": json.dumps([final_params]),
+            "spider_errors": "true",
+            # CRITICAL FIX: Use 'spider_universal' instead of 'common_settings'
+            # to match the raw API expectation / working CURL example.
+            "spider_universal": json.dumps(spider_universal) 
+        }
+
+        # Fix Pylance
+        from thordata._utils import build_builder_headers
+        headers = build_builder_headers(
+            self.client.scraper_token or "",
+            self.client.public_token or "",
+            self.client.public_key or ""
+        )
+
+        print(f"   ⚡ Sending Raw Payload (spider_universal): {json.dumps(spider_universal)}")
+
+        # Post to /video_builder
+        response = self.client._api_request_with_retry(
+            "POST", 
+            self.client._video_builder_url, 
+            data=payload, 
+            headers=headers
+        )
+        response.raise_for_status()
+        data = response.json()
+        
+        if data.get("code") != 200:
+            raise Exception(f"Video Builder API Error: {data}")
+            
+        return data["data"]["task_id"]
+
+    def _run_spider(self, config_key: str, input_value: str, dynamic_params: Optional[Dict[str, Any]] = None) -> Optional[str]:
         cfg = SPIDER_REGISTRY.get(config_key)
         if not cfg:
             print(f"❌ Registry Key Not Found: {config_key}")
             return None
 
-        # 1. Build Parameters
         final_params = {cfg.input_key: input_value}
         if cfg.extra_params: final_params.update(cfg.extra_params)
         if dynamic_params: final_params.update(dynamic_params)
 
-        print(f"🕵️ [Smart Route] Using: {cfg.desc} ({cfg.id}) | Mode: {'Video' if cfg.is_video else 'Data'}")
+        print(f"🕵️ [Smart Route] Using: {cfg.desc} ({cfg.id})")
 
         try:
-            download_url = ""
+            task_id = ""
             
             if cfg.is_video:
-                
-                settings = CommonSettings(
-                    resolution="720p",   # try 720p
-                    is_subtitles="true",
-                    audio_format="mp3"
-                )
-                
-                task_id = self.client.create_video_task(
-                    file_name=f"rag_vid_{cfg.id}",
-                    spider_id=cfg.id,
-                    spider_name=cfg.name,
-                    parameters=final_params,
-                    common_settings=settings
-                )
-                
-                status = self.client.wait_for_task(task_id, max_wait=600)
-                if status.lower() not in ("ready", "success", "finished"):
-                    raise Exception(f"Video Task failed: {status}")
-                download_url = self.client.get_task_result(task_id)
-            
+                # Bypass SDK Wrapper for Video
+                task_id = self._create_video_task_raw(cfg, final_params)
             else:
-                # Data Task (Google Maps 等走这里)
-                download_url = self.client.run_task(
+                # Standard Data Task
+                task_id = self.client.create_scraper_task(
                     file_name=f"rag_{cfg.id}",
                     spider_id=cfg.id,
                     spider_name=cfg.name,
-                    parameters=final_params,
-                    include_errors=True
+                    parameters=final_params
                 )
             
+            print(f"   ⏳ Task {task_id} created. Polling...")
+            
+            # Manual Polling
+            start_time = time.time()
+            download_url = ""
+            
+            while (time.time() - start_time) < 600:
+                status = self.client.get_task_status(task_id)
+                if status.lower() in ["ready", "success", "finished"]:
+                    download_url = self.client.get_task_result(task_id)
+                    break
+                if status.lower() in ["failed", "error", "cancelled"]:
+                    raise Exception(f"Task {task_id} ended with status: {status}")
+                time.sleep(3)
+
+            if not download_url:
+                raise Exception("Timeout waiting for task")
+
             # --- Download & Clean ---
-            print(f"⬇️ Downloading data...")
+            print(f"   ⬇️ Downloading data...")
             resp = requests.get(download_url, timeout=60)
-            data = resp.json()
+            
+            try:
+                data = resp.json()
+            except Exception:
+                return resp.text
             
             if isinstance(data, list):
                 if not data: return None
@@ -84,8 +136,8 @@ class SpecializedIngestor:
 
         # === Amazon ===
         if "amazon" in domain:
-            if "/s" in url and "k=" in url:
-                if "k" in query: return self._run_spider("amazon_search", query["k"][0], {"domain": f"{parsed.scheme}://{parsed.netloc}/"})
+            if "/s" in url and "k" in query:
+                return self._run_spider("amazon_search", query["k"][0], {"domain": f"{parsed.scheme}://{parsed.netloc}/"})
             if "product-reviews" in url: return self._run_spider("amazon_review", url)
             if "seller=" in url or "/sp?" in url: return self._run_spider("amazon_seller", url)
             return self._run_spider("amazon_product", url, {"country": "us"})
@@ -100,7 +152,7 @@ class SpecializedIngestor:
             if "v=" in url or "youtu.be" in domain:
                 return self._run_spider("youtube_video", url)
             elif "@" in path or "/channel/" in path:
-                return self._run_spider("youtube_post", url)
+                return self._run_spider("youtube_channel", url)
 
         # === TikTok ===
         elif "tiktok.com" in domain:
