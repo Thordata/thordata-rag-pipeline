@@ -1,63 +1,107 @@
-from thordata import ThordataClient
-from markdownify import markdownify as md
-from bs4 import BeautifulSoup
+"""Universal web scraper using Thordata's Web Unlocker."""
+from __future__ import annotations
+
 import logging
+import re
+from typing import Optional
+
+from bs4 import BeautifulSoup
+from markdownify import markdownify as md
+from thordata import AsyncThordataClient
+
+from ..core.config import settings
+
+logger = logging.getLogger(__name__)
+
 
 class UniversalIngestor:
-    def __init__(self, scraper_token):
-        self.client = ThordataClient(scraper_token=scraper_token)
+    """Universal web scraper that handles any URL via Thordata's Web Unlocker."""
 
-    def _safe_clean_dom(self, html: str) -> str:
+    def __init__(self, scraper_token: Optional[str] = None):
+        """Initialize the universal ingestor.
+
+        Args:
+            scraper_token: Optional scraper token. If not provided, uses settings.
         """
-        温和清洗：只移除绝对不需要的标签，保留 DOM 结构
+        self.scraper_token = scraper_token or settings.THORDATA_SCRAPER_TOKEN
+
+    def _clean_html(self, html: str) -> str:
+        """Clean HTML by removing unnecessary elements while preserving structure.
+
+        Args:
+            html: Raw HTML content
+
+        Returns:
+            Cleaned HTML string
         """
         soup = BeautifulSoup(html, "lxml")
 
-        # 1. 移除绝对垃圾 (脚本、样式、元数据)
-        for tag in soup(["script", "style", "noscript", "iframe", "meta", "link", "svg", "button", "input", "form"]):
+        # Remove script, style, and other non-content elements
+        for tag in soup(
+            ["script", "style", "noscript", "iframe", "meta", "link", "svg", "button", "input", "form"]
+        ):
             tag.decompose()
 
-        # 2. 移除明确的导航和页脚区域 (但不要动 div，因为正文可能在 div 里)
+        # Remove navigation and footer elements
         for tag in soup(["nav", "footer", "header", "aside"]):
             tag.decompose()
 
-        # 3. 策略优化：如果存在 <article> 标签，优先提取 article
-        # 这是绝大多数新闻/博客网站的标准正文容器
+        # Prefer <article> tag if present (common for blog/news sites)
         article = soup.find("article")
         if article:
             return str(article)
 
         return str(soup.body) if soup.body else str(soup)
 
-    def scrape_to_markdown(self, url: str, country: str = None) -> str:
-        print(f"🌐 正在通过 Thordata 抓取网页: {url} (Region: {country or 'Auto'})...")
+    async def scrape_to_markdown(
+        self,
+        url: str,
+        country: Optional[str] = None,
+        js_render: Optional[bool] = None,
+        wait_ms: int = 2000,
+    ) -> str:
+        """Scrape a URL and convert to markdown.
+
+        Args:
+            url: Target URL to scrape
+            country: Optional country code for geolocation
+            js_render: Whether to enable JavaScript rendering
+            wait_ms: Wait time in milliseconds before capture
+
+        Returns:
+            Markdown content string
+        """
+        logger.info(f"Scraping URL: {url} (Region: {country or 'Auto'})")
+
         try:
-            # 1. SDK 请求
-            kwargs = {
-                "url": url,
-                "js_render": True,
-                "output_format": "html",
-                "block_resources": "image,media", # 稍微放宽，font 有时影响布局判断
-                "wait": 5000 
-            }
-            if country:
-                kwargs["country"] = country
+            js_render = js_render if js_render is not None else settings.ENABLE_JS_RENDER
+            country = country or settings.DEFAULT_COUNTRY
 
-            raw_html = str(self.client.universal_scrape(**kwargs))
-            
-            # 2. 温和清洗
-            cleaned_dom = self._safe_clean_dom(raw_html)
+            async with AsyncThordataClient(scraper_token=self.scraper_token) as client:
+                # Use new namespace API
+                html = await client.universal.scrape_async(
+                    url=url,
+                    js_render=js_render,
+                    country=country,
+                    wait_time=wait_ms,
+                    output_format="html",
+                    block_resources="image,media",
+                )
 
-            # 3. 直接转 Markdown (不再依赖 Readability，因为它在现代 SPA 上容易失效)
-            # heading_style="ATX" 保证生成 # 标题
-            final_markdown = md(cleaned_dom, heading_style="ATX")
-            
-            # 4. 后处理：压缩连续空行
-            import re
-            final_markdown = re.sub(r'\n\s*\n', '\n\n', final_markdown)
-            
-            print(f"📝 提取策略: Safe Mode (Article/Body) | 内容长度: {len(final_markdown)} 字符")
-            return final_markdown
+            html_str = str(html) if not isinstance(html, str) else html
+
+            # Clean HTML
+            cleaned_html = self._clean_html(html_str)
+
+            # Convert to markdown
+            markdown = md(cleaned_html, heading_style="ATX")
+
+            # Post-process: compress consecutive blank lines
+            markdown = re.sub(r"\n\s*\n", "\n\n", markdown)
+
+            logger.info(f"Extracted content: {len(markdown)} characters")
+            return markdown
 
         except Exception as e:
+            logger.error(f"Universal scraping failed for {url}: {e}")
             return f"Universal Scraping Failed: {str(e)}"
